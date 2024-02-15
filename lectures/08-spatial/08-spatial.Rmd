@@ -75,7 +75,7 @@ theme_set(theme_minimal())
 Finally, we'll be accessing some data from the US Census Bureau through the [tidycensus package](https://walkerke.github.io/tidycensus/). This will require a Census API key, which you can request [here](https://api.census.gov/data/key_signup.html). Once that's done, you can set it using the `tidycensus::census_api_key()` function. I recommend using the "install = TRUE" option to save your key for future usage. See the function's help file for more information.
 
 ```{r, eval=FALSE}
-tidycensus::census_api_key("PLACE_YOUR_API_KEY_HERE", install = TRUE)
+#tidycensus::census_api_key("6e07a3a6d441ea6a9117e983b7ce8ae7d32bbcf1", install = TRUE)
 ```
 
 Also tell the tigris package to automatically cache its results to save on repeated downloading. I recommend adding this line to your ~/.Rprofile file
@@ -112,7 +112,6 @@ if (knitr::is_html_output()){
 **Bottom line:** You should always aim to choose a projection that best represents your specific area of study. I'll also show you how you can "re-orient" your projection to a specific latitude and longitude using the PROJ syntax. But first I'm obliged to share this [XKCD summary](https://xkcd.com/977/). (Do yourself a favour and click on the link.)
 
 ## Simple Features and the **sf** package
-
 R has long provided excellent support for spatial analysis and plotting (primarily through the **sp**, **rgdal**, **rgeos**, and **raster** packages). However, until recently, the complex structure of spatial data necessitated a set of equally complex spatial objects in R. I won't go into details, but a spatial object (say, a [SpatialPolygonsDataFrame](https://cran.r-project.org/web/packages/sp/vignettes/intro_sp.pdf)) was typically comprised of several "layers" --- much like a list --- with each layer containing a variety of "slots". While this approach did (and still does) work perfectly well, the convoluted structure provided some barriers to entry for newcomers. It also made it very difficult to incorporate spatial data into the tidyverse ecosystem that we're familiar with. Luckily, all this has changed thanks to the advent of the **sf** package ([link](https://r-spatial.github.io/sf/)).
 
 The "sf" stands for [**s**imple **f**eatures](https://en.wikipedia.org/wiki/Simple_Features), which is a simple (ahem) standard for representing the spatial geometries of real-world objects on a computer.^[See the [first](https://r-spatial.github.io/sf/articles/sf1.html) of the excellent **sf** vignettes for more details.] These objects --- i.e. "features" --- could include a tree, a building, a country's border, or the entire globe. The point is that they are characterised by a common set of rules, defining everything from how they are stored on our computer to which geometrical operations can be applied them. Of greater importance for our purposes, however, is the fact that **sf** represents these features in R as *data frames*. This means that all of our data wrangling skills from previous lectures can be applied to spatial data; say nothing of the specialized spatial functions that we'll cover next.
@@ -123,6 +122,32 @@ Somewhat confusingly, most of the functions in the **sf** package start with the
 
 Let's demonstrate by reading in a shapefile for Maine.^[**sf** includes the North Carolina county shapefile, but we're in Maine.] As you might have guessed, we're going to use the `st_read()` command and **sf** package will handle all the heavy lifting behind the scenes. Shapefile are a "geospatial vector data format" that is widely used in GIS software that typically have the file ending `.shp`.^[See [here](https://en.wikipedia.org/wiki/Shapefile) for more details.] Basically, it contains the shape of each feature (e.g. county) represented as coordinates, along with a bunch of other information about the feature (e.g. county name, population, etc.). 
 
+```{r mercator_distortion, echo = FALSE, out.width='100%'}
+install.packages('readr')
+library('readr')
+library(dplyr)
+
+options(timeout=600) # 600 seconds to download the file -- default is 60
+download.file("https://www2.census.gov/ces/opportunity/county_outcomes.zip", "data/county_outcomes.zip")
+options(timeout=60) # Reset the timeout to the default
+
+unzip("data/county_outcomes.zip", exdir = "data")
+op_atlas <- read_csv("data/county_outcomes.csv")
+file.remove("data/county_outcomes.csv") # Remove the CSV
+
+op_atlas <- select(op_atlas, czname, state, county, 
+  kfr_p25  = kfr_pooled_pooled_p25, 
+  kfr_p75  = kfr_pooled_pooled_p75) %>%
+  filter(state==23) # Maine's fips code is 23! 
+write_csv(op_atlas, "data/county_outcomes_p25_p75.csv") # Save the file
+
+op_atlas <- op_atlas %>% 
+  mutate(GEOID= as.character(state*1000+county)) # Create a 5-digit FIPS code as a string
+
+op_atlas
+```
+
+
 How do we get the shapefile? Well the Census has loads that cover all kinds of different geographies at [TIGER](https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html), which stands for Topologically Integrated Geographic Encoding and Referencing. You could go in and download any shapefile you want OR you could use a package like **tidycensus** or **tigris** to download it for you. You're already familiar with **tidycensus**, which you may have noticed you can get it to return `geometry` as a variable if you specify `geometry=TRUE`. This is a vector that **sf** can use. 
 
 ```{r tidycensus, eval=FALSE}
@@ -132,13 +157,15 @@ me = tidycensus::get_acs(
   state = "ME", 
   geometry = TRUE
   )
+
+me
 ```
 
 ```
 
 [**tigris**](https://github.com/walkerke/tigris) is explained in greater detail below, but it contains just about every TIGER shapefile that you could want, which come with more spatial info than **tidycensus** will give. For example, here's how we can download the Maine counties shapefile:
 
-```{r maine, message=F, results = FALSE}
+```{r maine, message=F, results = TRUE}
 # library(tigris) ## Already loaded
 me = tigris::counties(state='ME',
   year=2010)
@@ -162,7 +189,7 @@ Plotting **sf** objects is incredibly easy thanks to the package's integration w
 
 ```{r me_plot}
 # library(tidyverse) ## Already loaded
-
+library(ggplot2)
 me_plot = 
   ggplot(me) +
   geom_sf(aes(fill = ALAND10), alpha=0.8, col="white") +
@@ -183,6 +210,8 @@ me %>%
 Or, we can specify a common projection directly in the ggplot call using `coord_sf()`. This is often the most convenient approach when you are combining multiple **sf** data frames in the same plot.
 
 ```{r me_mollweide_plot}
+install.packages('sf')
+library('sf')
 me_plot +
   coord_sf(crs = "+proj=moll") +
   labs(subtitle = "Mollweide projection") 
@@ -212,6 +241,8 @@ You can also perform `group_by()` and `summarise()` operations as per normal (se
 Let's try this by joining on the Opportunity Atlas county level data, which we can get from [Opportunity Insights](https://opportunityinsights.org/data/) or the [Census](https://www.census.gov/programs-surveys/ces/data/public-use-data/opportunity-atlas-data-tables.html).
 
 ```{r join,message=FALSE}
+
+library(stringr)
 op_atlas <- read_csv(
     file='https://www2.census.gov/ces/opportunity/county_outcomes_simple.csv',
     show_col_types = FALSE
@@ -229,6 +260,7 @@ me_join <- me %>% inner_join(op_atlas, by="GEOID10")
 And, just to show that we've got the bases covered, you can also implement your favourite **tidyr** verbs. For example, we can `tidyr::gather()` the data to long format, which is useful for facetted plotting.^[In case you're wondering: the newer `tidyr::pivot_*` functions [do not](https://github.com/r-spatial/sf/pull/1151) yet work with **sf** objects.] Here I demonstrate using the "BIR74" and "BIR79" columns (i.e. the number of births in each county in 1974 and 1979, respectively).
 
 ```{r me_tidyr}
+library(tidyr)
 me_join %>% 
   select(county = NAME10, matches('kfr'), geometry) %>% 
   # Gather reshapes the data. 
@@ -311,6 +343,7 @@ A sub-genre of binary geometric operations falls into the category of logic rule
 For example, we can calculate the intersection of different spatial objects using `sf::st_intersection()`. For this next example, I'm going to use two new spatial objects: 1) A state map of the USA from the **maps** package and 2) the primary roads from the **tigris** package. Don't worry too much about the process used for loading these datasets; I'll cover that in more depth shortly. For the moment, just focus on the idea that we want to see which adminstrative regions are intersected by the river network. Start by plotting all of the data to get a visual sense of the overlap:
 
 ```{r usa, message=F, results = FALSE}
+library('maps')
 ## Get the data
 usa = st_as_sf(map('state', plot = FALSE, fill = TRUE))
 road = tigris::primary_roads()
